@@ -6,10 +6,10 @@ from sklearn.utils import resample
 import networkx as nx
 
 # ================== CONFIGURACIÓN ==================
-CSV_PATH = "Data/Estadísticas_operativas_seleccionadas_Mayor.csv"  # <-- tu archivo (filas = productos, columnas = meses)
+CSV_PATH = "Data/Estadísticas_operativas_seleccionadas_Mayor.csv"
 index_col_name = 0  # si la primera columna contiene el nombre del producto
-n_estimators = 500
-random_state = 50
+n_estimators = 500 # Número de arboles para el Random Forest
+random_state = 50 # Semilla
 n_boot = 30  # número de bootstraps temporales
 top_percent = 85  # percentil de corte para aristas (mantener las más fuertes)
 
@@ -74,7 +74,7 @@ G_und.remove_nodes_from(list(nx.isolates(G_und)))  # elimina nodos aislados
 
 
 # ================== FUNCIÓN SMALL-WORLD ==================
-def small_world_sigma(Gu):
+def small_world(Gu):
     if Gu.number_of_nodes() < 3 or Gu.number_of_edges() == 0:
         return np.nan, np.nan, np.nan, np.nan, np.nan
     # componente gigante
@@ -92,16 +92,16 @@ def small_world_sigma(Gu):
     Cr = nx.transitivity(ER)
     Lr = nx.average_shortest_path_length(ER)
 
-    sigma = (C / Cr) / (L / Lr) if (Cr > 0 and Lr > 0) else np.nan
-    return C, L, Cr, Lr, sigma
+    S = (C / Cr) / (L / Lr) if (Cr > 0 and Lr > 0) else np.nan
+    return C, L, Cr, Lr, S
 
 
 # ================== RESULTADOS ==================
-C, L, Cr, Lr, sigma = small_world_sigma(G_und)
+C, L, Cr, Lr, S = small_world(G_und)
 print(f"Nodos: {G_und.number_of_nodes()}, Aristas: {G_und.number_of_edges()}")
-print(f"C={C:.3f}, L={L:.3f}, C_rand={Cr:.3f}, L_rand={Lr:.3f}, sigma={sigma:.3f}")
+print(f"C={C:.3f}, L={L:.3f}, C_rand={Cr:.3f}, L_rand={Lr:.3f}, S={S:.3f}")
 
-if sigma > 1:
+if S > 1:
     print("La red muestra propiedades de mundo pequeño.")
 else:
     print("No se detectan propiedades claras de mundo pequeño.")
