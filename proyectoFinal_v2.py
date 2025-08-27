@@ -25,6 +25,9 @@ n = df_z.shape[0]
 # ================== MATRIZ DE INFLUENCIAS (RF + BOOTSTRAP) ==================
 W = pd.DataFrame(0.0, index=series_names, columns=series_names)  # fuente -> objetivo
 
+#contenedor para métricas por objetivo
+diag_rows = []
+
 rng = np.random.RandomState(random_state)
 for target in series_names:
     y = df_z.loc[target, :].values
@@ -34,9 +37,15 @@ for target in series_names:
 
     imp_accum = np.zeros(len(feat_names), dtype=float)
 
+    # Listas para acumular métricas
+    r2_oob_list = []
+    rmse_oob_list = []
+    n_oob_list = []
+
     for b in range(n_boot):
         # bootstrap por columnas (meses)
-        idx = resample(np.arange(len(y)), replace=True, random_state=rng.randint(0, 1_000_000))
+        idx = resample(np.arange(len(y)), replace=True,
+                       random_state=rng.randint(0, 1_000_000))
         Xb = X[idx, :]
         yb = y[idx]
 
@@ -44,23 +53,75 @@ for target in series_names:
             n_estimators=n_estimators,
             random_state=rng.randint(0, 1_000_000),
             n_jobs=-1,
-            max_features="sqrt"
+            max_features="sqrt",
+            bootstrap=True,
+            oob_score=True
         )
         rf.fit(Xb, yb)
 
-        # importancia por permutación
-        pi = permutation_importance(rf, Xb, yb, n_repeats=5,
-                                    random_state=rng.randint(0, 1_000_000), n_jobs=-1)
+        # ================== IMPORTANCIA POR PERMUTACIÓN ==================
+        pi = permutation_importance(
+            rf, Xb, yb, n_repeats=5,
+            random_state=rng.randint(0, 1_000_000), n_jobs=-1
+        )
         imp_accum += np.maximum(0, pi.importances_mean)
 
+        # ================== MÉTRICAS OOB (R² y RMSE) ==================
+        # R² OOB directamente del estimador
+        r2_oob = rf.oob_score_
+
+        # RMSE OOB a partir de las predicciones OOB disponibles
+        # (algunas entradas pueden ser NaN si nunca quedaron OOB para ningún árbol)
+        oob_pred = getattr(rf, "oob_prediction_", None)
+        if oob_pred is not None:
+            valid = ~np.isnan(oob_pred)
+            if valid.any():
+                rmse_oob = np.sqrt(np.mean((yb[valid] - oob_pred[valid])**2))
+                n_oob = int(valid.sum())
+            else:
+                rmse_oob = np.nan
+                n_oob= 0
+        else:
+            rmse_oob = np.nan
+            n_oob= 0
+
+        r2_oob_list.append(r2_oob)
+        rmse_oob_list.append(rmse_oob)
+        n_oob_list.append(n_oob)
+
+    # normaliza importancias y llena W
     imp_mean = imp_accum / n_boot
     if imp_mean.max() > 0:
         imp_mean = imp_mean / imp_mean.max()
-
     for k, src in enumerate(feat_names):
         W.loc[src, target] = imp_mean[k]
 
+    # ================== RESUMEN DE MÉTRICAS PARA ESTE OBJETIVO ==================
+    r2_mean = float(np.nanmean(r2_oob_list))
+    r2_std  = float(np.nanstd(r2_oob_list, ddof=1))
+    rmse_mean = float(np.nanmean(rmse_oob_list))
+    rmse_std  = float(np.nanstd(rmse_oob_list, ddof=1))
+    n_oob_mean = float(np.nanmean(n_oob_list))
+
+    '''
+    Esta será las métricas para una variable  
+    '''
+    diag_rows.append({
+        "target": target,
+        "r2_mean": r2_mean,
+        "r2_std": r2_std,
+        "rmse_mean": rmse_mean,
+        "rmse_std": rmse_std,
+        "n_oob_mean": n_oob_mean
+    })
+
+# guarda matriz de influencias
 W.to_csv('matrizInfluencias.csv', index=True)
+
+# NUEVO: guarda diagnóstico de modelos RF por objetivo
+pd.DataFrame(diag_rows).to_csv("diagnostico_modelos_rf.csv", index=False)
+print("Guardado diagnóstico de RF en diagnostico_modelos_rf.csv")
+
 
 # ================== CONSTRUCCIÓN DE LA RED ==================
 thr = np.percentile(W.values[W.values > 0], top_percent) if (W.values > 0).sum() > 0 else 1.0
